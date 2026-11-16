@@ -85,6 +85,9 @@ targets:
           - $(SRCROOT)/ThirdParty/libpng
           - $(SRCROOT)/ThirdParty/msgpack/include
           - $(SRCROOT)/ThirdParty/bass
+        SYSTEM_HEADER_SEARCH_PATHS:
+          - $(TOOLCHAIN_DIR)/usr/include/c++/v1
+          - $(SDKROOT)/usr/include
         GCC_PREPROCESSOR_DEFINITIONS:
           - BOOST_FILESYSTEM_VERSION=3            # path::imbue / wstring() API the engine uses
           - BOOST_FILESYSTEM_STATIC_LINK=1
@@ -132,5 +135,8 @@ targets:
         HEADER_SEARCH_PATHS:
           - $(SRCROOT)/Platform
           - $(SRCROOT)
+        SYSTEM_HEADER_SEARCH_PATHS:
+          - $(TOOLCHAIN_DIR)/usr/include/c++/v1
+          - $(SDKROOT)/usr/include
         OTHER_LDFLAGS: [-lc++]
         OTHER_CPLUSPLUSFLAGS: [-stdlib=libc++, -isystem, $(TOOLCHAIN_DIR)/usr/include/c++/v1, -Wno-c++11-narrowing]
