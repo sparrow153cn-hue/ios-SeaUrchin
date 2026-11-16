@@ -116,13 +116,17 @@ targets:
       - sdk: CoreGraphics.framework
       - sdk: AudioToolbox.framework
       - sdk: libz.tbd
+      # BASS for iOS ships as .xcframework (device + simulator slices).  scripts/fetch_bass.sh installs them and sets
+      # `embed` to false only if the binary inside is a static archive.  (The real BASS 2.4 iOS package is dynamic: embed.)
+      - framework: ThirdParty/bass/bass.xcframework
+        embed: true
+      - framework: ThirdParty/bass/bassmix.xcframework
+        embed: true
     settings:
       base:
         INFOPLIST_FILE: Platform/iOS/Info.plist
         HEADER_SEARCH_PATHS:
           - $(SRCROOT)/Platform
           - $(SRCROOT)
-        LIBRARY_SEARCH_PATHS:
-          - $(SRCROOT)/ThirdParty/bass/ios
-        OTHER_LDFLAGS: [-lbass, -lbassmix, -lc++]
+        OTHER_LDFLAGS: [-lc++]
         OTHER_CPLUSPLUSFLAGS: [-Wno-c++11-narrowing]
