@@ -60,11 +60,25 @@ for n in bass bassmix; do
   python3 - "$n" "$embed" <<'PY'
 import re, sys
 name, embed = sys.argv[1:3]
-text = open('project.yml', encoding='utf-8').read()
-pat = re.compile(r'(- framework: ThirdParty/bass/' + name + r'\.xcframework\n\s+embed: )(true|false)')
-text, count = pat.subn(r'\g<1>' + embed, text)
-if count != 1:
-    sys.exit("project.yml: expected exactly one %s.xcframework dependency, found %d" % (name, count))
+text = open('project.yml', encoding='utf-8').read()          # text mode: CRLF is normalised to LF
+dep = re.compile(r'(- framework: ThirdParty/bass/' + name + r'\.xcframework\n\s+embed: )(true|false)')
+
+if not dep.search(text):
+    # project.yml predates the xcframework switch (it linked loose libbass.a files): migrate it.
+    anchor = '      - sdk: libz.tbd\n'
+    if anchor not in text:
+        sys.exit("project.yml: cannot find the Seaurchin target's dependency list ('- sdk: libz.tbd'); "
+                 "copy the current project.yml from the repository/zip")
+    text = text.replace(anchor, anchor + '      - framework: ThirdParty/bass/%s.xcframework\n        embed: true\n' % name, 1)
+    print("   project.yml: added the %s.xcframework dependency (old layout migrated)" % name)
+
+text, n = dep.subn(r'\g<1>' + embed, text)
+if n != 1:
+    sys.exit("project.yml: expected exactly one %s.xcframework dependency, found %d" % (name, n))
+
+# leftovers of the old loose-library layout would break the link step
+text = text.replace('        LIBRARY_SEARCH_PATHS:\n          - $(SRCROOT)/ThirdParty/bass/ios\n', '')
+text = text.replace('OTHER_LDFLAGS: [-lbass, -lbassmix, -lc++]', 'OTHER_LDFLAGS: [-lc++]')
 open('project.yml', 'w', encoding='utf-8').write(text)
 PY
   echo "   $n: embed=$embed"
