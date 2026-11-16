@@ -1,0 +1,1098 @@
+diff -ruN '--exclude=*.rc' '--exclude=*.filters' '--exclude=Log.txt' base/Seaurchin/Controller.cpp /home/claude/work/Seaurchin-iOS/Seaurchin/Controller.cpp
+--- base/Seaurchin/Controller.cpp	2026-11-15 11:40:41.197420011 +0000
++++ /home/claude/work/Seaurchin-iOS/Seaurchin/Controller.cpp	2026-11-14 20:12:28.733562737 +0000
+@@ -3,16 +3,25 @@
+ 
+ using namespace std;
+ 
++#if defined(_WIN32)
+ static int WacomFingerCallback(WacomMTFingerCollection *fingerPacket, void *userData);
++#endif
++
++int ControlState::SliderIndexForX(double x)
++{
++    if (!(x > 0.0)) return 0;                       // also catches NaN
++    int index = (int)floor(x * SliderCount);
++    return index >= SliderCount ? SliderCount - 1 : index;
++}
+ 
+ void ControlState::Initialize()
+ {
+-    ZeroMemory(KeyboardCurrent, sizeof(char) * 256);
+-    ZeroMemory(KeyboardLast, sizeof(char) * 256);
+-    ZeroMemory(KeyboardTrigger, sizeof(char) * 256);
+-    ZeroMemory(IntegratedCurrent, sizeof(char) * 16);
+-    ZeroMemory(IntegratedLast, sizeof(char) * 16);
+-    ZeroMemory(IntegratedTrigger, sizeof(char) * 16);
++    memset(KeyboardCurrent, 0, sizeof(char) * 256);
++    memset(KeyboardLast, 0, sizeof(char) * 256);
++    memset(KeyboardTrigger, 0, sizeof(char) * 256);
++    memset(IntegratedCurrent, 0, sizeof(char) * 16);
++    memset(IntegratedLast, 0, sizeof(char) * 16);
++    memset(IntegratedTrigger, 0, sizeof(char) * 16);
+ 
+     SliderKeyboardNumbers[0] = KEY_INPUT_A;
+     SliderKeyboardNumbers[1] = KEY_INPUT_Z;
+@@ -31,11 +40,14 @@
+     SliderKeyboardNumbers[14] = KEY_INPUT_K;
+     SliderKeyboardNumbers[15] = KEY_INPUT_COMMA;
+ 
++#if defined(_WIN32)
+     InitializeWacomTouchDevice();
++#endif
+ }
+ 
+ void ControlState::Terminate()
+ {
++#if defined(_WIN32)
+     if (IsWacomDeviceAvailable) {
+         WacomMTUnRegisterFingerReadCallback(WacomDeviceIds[0], NULL, WacomMTProcessingMode::WMTProcessingModeNone, this);
+         WacomMTQuit();
+@@ -43,16 +55,17 @@
+         delete[] WacomDeviceCapabilities;
+         delete[] WacomDeviceIds;
+     }
++#endif
+ }
+ 
+ void ControlState::Update()
+ {
+-    memcpy_s(KeyboardLast, sizeof(char) * 256, KeyboardCurrent, sizeof(char) * 256);
++    memcpy(KeyboardLast, KeyboardCurrent, sizeof(char) * 256);
+     GetHitKeyStateAll(KeyboardCurrent);
+     for (int i = 0; i < 256; i++) KeyboardTrigger[i] = !KeyboardLast[i] && KeyboardCurrent[i];
+ 
+     for (int i = 0; i < 16; i++) IntegratedLast[i] = IntegratedCurrent[i];
+-    for (int i = 0; i < 16; i++) IntegratedCurrent[i] = KeyboardCurrent[SliderKeyboardNumbers[i]];
++    for (int i = 0; i < 16; i++) IntegratedCurrent[i] = KeyboardCurrent[(unsigned char)SliderKeyboardNumbers[i]];
+ 
+     {
+         lock_guard<mutex> lock(FingerMutex);
+@@ -99,6 +112,37 @@
+     SliderKeyboardNumbers[sliderNumber] = keyboardNumber;
+ }
+ 
++void ControlState::TouchBegan(int fingerId, double x)
++{
++    lock_guard<mutex> lock(FingerMutex);
++    auto data = make_shared<ControllerFingerState>();
++    data->Id = fingerId;
++    data->SliderPosition = SliderIndexForX(x);
++    CurrentFingers[fingerId] = data;
++}
++
++void ControlState::TouchMoved(int fingerId, double x)
++{
++    lock_guard<mutex> lock(FingerMutex);
++    auto it = CurrentFingers.find(fingerId);
++    if (it == CurrentFingers.end()) {
++        auto data = make_shared<ControllerFingerState>();
++        data->Id = fingerId;
++        data->SliderPosition = SliderIndexForX(x);
++        CurrentFingers[fingerId] = data;
++        return;
++    }
++    it->second->SliderPosition = SliderIndexForX(x);
++}
++
++void ControlState::TouchEnded(int fingerId)
++{
++    lock_guard<mutex> lock(FingerMutex);
++    CurrentFingers.erase(fingerId);
++}
++
++#if defined(_WIN32)
++
+ void ControlState::InitializeWacomTouchDevice()
+ {
+     IsWacomDeviceAvailable = false;
+@@ -140,42 +184,19 @@
+     for (int i = 0; i < fingers->FingerCount; i++) {
+         auto finger = fingers->Fingers[i];
+         if (!finger.Confidence) continue;
++        const double x = finger.X / cap.LogicalWidth;
+         switch (finger.TouchState) {
+             case WacomMTFingerState::WMTFingerStateNone:
+                 break;
+-            case WacomMTFingerState::WMTFingerStateDown: {
+-                lock_guard<mutex> lock(FingerMutex);
+-                auto data = make_shared<ControllerFingerState>();
+-                data->Id = finger.FingerID;
+-                data->State = WacomMTFingerState::WMTFingerStateDown;
+-                data->SliderPosition = floor(finger.X / cap.LogicalWidth * 16);
+-                CurrentFingers[finger.FingerID] = data;
+-
+-                //ostringstream ss;
+-                //ss << "Touched #" << finger.FingerID << " at " << data->SliderPosition << endl;
+-                //WriteDebugConsole(ss.str().c_str());
++            case WacomMTFingerState::WMTFingerStateDown:
++                TouchBegan(finger.FingerID, x);
+                 break;
+-            }
+-            case WacomMTFingerState::WMTFingerStateHold: {
+-                lock_guard<mutex> lock(FingerMutex);
+-                auto data = CurrentFingers[finger.FingerID];
+-                if (!data) {
+-                    auto data = make_shared<ControllerFingerState>();
+-                    data->Id = finger.FingerID;
+-                    data->State = WacomMTFingerState::WMTFingerStateDown;
+-                    data->SliderPosition = floor(finger.X / cap.LogicalWidth * 16);
+-                    CurrentFingers[finger.FingerID] = data;
+-                    break;
+-                }
+-                data->State = WacomMTFingerState::WMTFingerStateHold;
+-                data->SliderPosition = floor(finger.X / cap.LogicalWidth * 16);
++            case WacomMTFingerState::WMTFingerStateHold:
++                TouchMoved(finger.FingerID, x);
+                 break;
+-            }
+-            case WacomMTFingerState::WMTFingerStateUp: {
+-                lock_guard<mutex> lock(FingerMutex);
+-                CurrentFingers.erase(finger.FingerID);
++            case WacomMTFingerState::WMTFingerStateUp:
++                TouchEnded(finger.FingerID);
+                 break;
+-            }
+         }
+     }
+ }
+@@ -187,4 +208,6 @@
+     auto controller = static_cast<ControlState*>(userData);
+     controller->UpdateWacomTouchDeviceFinger(fingerPacket);
+     return 0;
+-}
+\ No newline at end of file
++}
++
++#endif // _WIN32
+diff -ruN '--exclude=*.rc' '--exclude=*.filters' '--exclude=Log.txt' base/Seaurchin/Controller.h /home/claude/work/Seaurchin-iOS/Seaurchin/Controller.h
+--- base/Seaurchin/Controller.h	2026-11-15 11:40:41.199785778 +0000
++++ /home/claude/work/Seaurchin-iOS/Seaurchin/Controller.h	2026-11-14 20:12:28.733375080 +0000
+@@ -8,12 +8,13 @@
+ 
+ struct ControllerFingerState {
+     int Id;
+-    WacomMTFingerState State;
+     int SliderPosition;
+ };
+ 
+ class ControlState final {
++#if defined(_WIN32)
+     friend int WacomFingerCallback(WacomMTFingerCollection *fingerPacket, void *userData);
++#endif
+ 
+ private:
+     char KeyboardCurrent[256];
+@@ -24,15 +25,20 @@
+     char IntegratedTrigger[16];
+     char SliderKeyboardNumbers[16];
+ 
++    std::unordered_map<int, std::shared_ptr<ControllerFingerState>> CurrentFingers;
++    std::mutex FingerMutex;
++
++#if defined(_WIN32)
+     bool IsWacomDeviceAvailable = false;
+     int *WacomDeviceIds = nullptr;
+     WacomMTCapability *WacomDeviceCapabilities = nullptr;
+-    std::unordered_map<int, std::shared_ptr<ControllerFingerState>> CurrentFingers;
+-    std::mutex FingerMutex;
+     void InitializeWacomTouchDevice();
+     void UpdateWacomTouchDeviceFinger(WacomMTFingerCollection *fingers);
++#endif
+ 
+ public:
++    static const int SliderCount = 16;
++
+     void Initialize();
+     void Terminate();
+     void Update();
+@@ -40,4 +46,13 @@
+     bool GetTriggerState(ControllerSource source, int number);
+     bool GetCurrentState(ControllerSource source, int number);
+     void SetSliderKey(int sliderNumber, int keyboardNumber);
+-};
+\ No newline at end of file
++
++    // Platform independent touch input (used by the iOS host; may be called from any thread).
++    // x is the horizontal position across the whole slider area: 0.0 = left edge, 1.0 = right edge.
++    void TouchBegan(int fingerId, double x);
++    void TouchMoved(int fingerId, double x);
++    void TouchEnded(int fingerId);
++
++    // Maps x in [0,1] to a slider index in [0,15]; out-of-range input is clamped.
++    static int SliderIndexForX(double x);
++};
+diff -ruN '--exclude=*.rc' '--exclude=*.filters' '--exclude=Log.txt' base/Seaurchin/Debug.cpp /home/claude/work/Seaurchin-iOS/Seaurchin/Debug.cpp
+--- base/Seaurchin/Debug.cpp	2026-11-15 11:40:41.201229978 +0000
++++ /home/claude/work/Seaurchin-iOS/Seaurchin/Debug.cpp	2026-11-14 20:11:48.957243656 +0000
+@@ -2,6 +2,8 @@
+ 
+ using namespace std;
+ 
++#if defined(_WIN32)
++
+ static HANDLE   hConsoleOutput = nullptr,
+                 hConsoleInput = nullptr,
+                 hConsoleError = nullptr;
+@@ -21,12 +23,12 @@
+     FreeConsole();
+ }
+ 
+-void _WriteDebugConsoleA(LPCSTR string)
++void _WriteDebugConsoleA(const char *string)
+ {
+     WriteConsoleA(hConsoleOutput, string, strlen(string), &dwDummy, nullptr);
+ }
+ 
+-void _WriteDebugConsoleW(LPCWSTR string)
++void _WriteDebugConsoleW(const wchar_t *string)
+ {
+     WriteConsoleW(hConsoleOutput, string, wcslen(string), &dwDummy, nullptr);
+ }
+@@ -41,7 +43,29 @@
+     delete[] buffer;
+ }
+ 
++#else // POSIX: the debug "console" is stderr (shown in Xcode's console)
++
++void _InitializeDebugFeature() {}
++void _TerminateDebugFeature() {}
++
++void _WriteDebugConsoleA(const char *string)
++{
++    fputs(string, stderr);
++}
++
++void _WriteDebugConsoleW(const wchar_t *string)
++{
++    fputs(sea::WideToUtf8(string).c_str(), stderr);
++}
++
++void _WriteDebugConsoleU(const string& message)
++{
++    fputs(message.c_str(), stderr);
++}
++
++#endif
++
+ void Debug_ReleaseFunction(...)
+ {
+     
+-}
+\ No newline at end of file
++}
+diff -ruN '--exclude=*.rc' '--exclude=*.filters' '--exclude=Log.txt' base/Seaurchin/Debug.h /home/claude/work/Seaurchin-iOS/Seaurchin/Debug.h
+--- base/Seaurchin/Debug.h	2026-11-15 11:40:41.198683586 +0000
++++ /home/claude/work/Seaurchin-iOS/Seaurchin/Debug.h	2026-11-14 20:11:48.957010119 +0000
+@@ -1,18 +1,17 @@
+ ﻿#pragma once
+ 
+-
+ #include "Config.h"
+ 
+-#ifdef _DEBUG
+-#ifdef UNICODE
++#if defined(_DEBUG) || defined(DEBUG) || defined(SU_FORCE_LOG)
++#if defined(_WIN32) && defined(UNICODE)
+ 
+ #define WriteDebugConsole _WriteDebugConsoleW
+ 
+-#else // UNICODE、↓はマルチバイト時
++#else // multibyte build / non-Windows
+ 
+ #define WriteDebugConsole _WriteDebugConsoleA
+ 
+-#endif // UNICODE
++#endif
+ 
+ #define InitializeDebugFeature _InitializeDebugFeature
+ #define TerminateDebugFeature _TerminateDebugFeature
+@@ -20,7 +19,7 @@
+ 
+ #define ASSERT_CALL WriteDebugConsole((string(__func__) + " Called!\n").c_str())
+ 
+-#else // _DEBUG、↓はRelease時
++#else // Release
+ 
+ #define WriteDebugConsole Debug_ReleaseFunction
+ #define InitializeDebugFeature Debug_ReleaseFunction
+@@ -28,12 +27,12 @@
+ #define WriteDebugConsoleU Debug_ReleaseFunction
+ #define ASSERT_CALL
+ 
+-#endif // _DEBUG
++#endif
+ 
+ void _InitializeDebugFeature();
+ void _TerminateDebugFeature();
+ 
+-void _WriteDebugConsoleA(LPCSTR string);
+-void _WriteDebugConsoleW(LPCWSTR string);
++void _WriteDebugConsoleA(const char *string);
++void _WriteDebugConsoleW(const wchar_t *string);
+ void _WriteDebugConsoleU(const std::string& message);
+-void Debug_ReleaseFunction(...);
+\ No newline at end of file
++void Debug_ReleaseFunction(...);
+diff -ruN '--exclude=*.rc' '--exclude=*.filters' '--exclude=Log.txt' base/Seaurchin/EffectBuilder.cpp /home/claude/work/Seaurchin-iOS/Seaurchin/EffectBuilder.cpp
+--- base/Seaurchin/EffectBuilder.cpp	2026-11-15 11:40:41.201568021 +0000
++++ /home/claude/work/Seaurchin-iOS/Seaurchin/EffectBuilder.cpp	2026-11-14 20:13:05.507834643 +0000
+@@ -21,7 +21,7 @@
+ {
+     string source, line;
+     ifstream file;
+-    file.open(fileName, ios::in);
++    file.open(SU_FS_PATH(fileName), ios::in);
+     if (!file) return;
+     ostringstream oss;
+     while (getline(file, line))
+diff -ruN '--exclude=*.rc' '--exclude=*.filters' '--exclude=Log.txt' base/Seaurchin/ExecutionManager.cpp /home/claude/work/Seaurchin-iOS/Seaurchin/ExecutionManager.cpp
+--- base/Seaurchin/ExecutionManager.cpp	2026-11-15 11:40:41.198837213 +0000
++++ /home/claude/work/Seaurchin-iOS/Seaurchin/ExecutionManager.cpp	2026-11-14 20:13:05.506535333 +0000
+@@ -51,7 +51,7 @@
+     std::ifstream slfile;
+     string procline;
+     path slpath = SharedSetting->GetRootDirectory() / SU_DATA_DIR / SU_SCRIPT_DIR / "SettingList.txt";
+-    slfile.open(slpath.wstring(), ios::in);
++    slfile.open(SU_FS_PATH(slpath.wstring()), ios::in);
+     while (getline(slfile, procline))
+         if (procline[0] != '#') SettingManager->AddSettingByString(procline);
+     slfile.close();
+@@ -324,6 +324,7 @@
+ }
+ */
+ 
++#if defined(_WIN32)
+ std::tuple<bool, LRESULT> ExecutionManager::CustomWindowProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
+ {
+     ostringstream buffer;
+@@ -356,3 +357,4 @@
+     }
+ 
+ }
++#endif // _WIN32
+diff -ruN '--exclude=*.rc' '--exclude=*.filters' '--exclude=Log.txt' base/Seaurchin/ExecutionManager.h /home/claude/work/Seaurchin-iOS/Seaurchin/ExecutionManager.h
+--- base/Seaurchin/ExecutionManager.h	2026-11-15 11:40:41.198284218 +0000
++++ /home/claude/work/Seaurchin-iOS/Seaurchin/ExecutionManager.h	2026-11-14 20:13:05.506254496 +0000
+@@ -26,8 +26,10 @@
+     std::shared_ptr<SoundManager> Sound;
+     std::shared_ptr<MusicsManager> Musics;
+     std::unordered_map<std::string, boost::any> optionalData;
++#if defined(_WIN32)
+     HIMC hImc;
+     DWORD ImmConversion, ImmSentence;
++#endif
+     SSoundMixer *MixerBGM, *MixerSE;
+ 
+ public:
+@@ -50,7 +52,9 @@
+     inline AngelScript* GetScriptInterfaceUnsafe() { return ScriptInterface.get(); }
+     inline SoundManager* GetSoundManagerUnsafe() { return Sound.get(); }
+ 
++#if defined(_WIN32)
+     std::tuple<bool, LRESULT> CustomWindowProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
++#endif
+     void ExecuteSkin();
+     bool ExecuteSkin(const std::string &file);
+     void ExecuteSystemMenu();
+diff -ruN '--exclude=*.rc' '--exclude=*.filters' '--exclude=Log.txt' base/Seaurchin/Font.h /home/claude/work/Seaurchin-iOS/Seaurchin/Font.h
+--- base/Seaurchin/Font.h	2026-11-15 11:40:41.198340213 +0000
++++ /home/claude/work/Seaurchin-iOS/Seaurchin/Font.h	2026-11-14 20:12:53.224711459 +0000
+@@ -10,8 +10,10 @@
+     int16_t bearX;
+     int16_t bearY;
+     uint16_t wholeAdvance;
+-    wchar_t letter;
++    uint16_t letter;    // UTF-16 code unit.  Was wchar_t, whose size differs between platforms and
++                        // is part of the on-disk .sif format (18 bytes per glyph record).
+ } GlyphInfo;
++static_assert(sizeof(GlyphInfo) == 18, ".sif glyph records are 18 bytes");
+ 
+ typedef struct
+ {
+@@ -20,6 +22,7 @@
+     uint32_t GlyphCount;
+     int Size;
+ } FontDataHeader;
++static_assert(sizeof(FontDataHeader) == 12, ".sif header is 12 bytes");
+ 
+ class RectPacker final
+ {
+diff -ruN '--exclude=*.rc' '--exclude=*.filters' '--exclude=Log.txt' base/Seaurchin/GameHost.cpp /home/claude/work/Seaurchin-iOS/Seaurchin/GameHost.cpp
+--- base/Seaurchin/GameHost.cpp	1970-01-01 00:00:00.000000000 +0000
++++ /home/claude/work/Seaurchin-iOS/Seaurchin/GameHost.cpp	2026-11-15 04:53:29.275034731 +0000
+@@ -0,0 +1,127 @@
++﻿// GameHost.cpp - drives ExecutionManager without a Win32 message loop.
++#include "GameHost.h"
++
++#include "Config.h"
++#include "Debug.h"
++#include "Setting.h"
++#include "ExecutionManager.h"
++
++#include <atomic>
++#include <codecvt>
++#include <locale>
++
++#if defined(__clang__)
++#pragma clang diagnostic ignored "-Wdeprecated-declarations"   // std::codecvt_utf8 is deprecated in C++17 but is what Boost.Filesystem wants
++#endif
++
++using namespace std;
++using namespace std::chrono;
++
++namespace {
++    shared_ptr<Setting> g_setting;
++    unique_ptr<ExecutionManager> g_manager;
++    steady_clock::time_point g_last;
++    atomic<bool> g_exitRequested(false);
++    bool g_started = false;
++}
++
++namespace sea {
++
++void RequestApplicationExit()
++{
++    // iOS apps must not terminate themselves; the request is recorded for the host to act on (or ignore).
++    g_exitRequested = true;
++    WriteDebugConsole("ExitApplication() requested\n");
++}
++
++bool GameHostExitRequested() { return g_exitRequested; }
++
++bool GameHostStart(const GameHostConfig &config)
++{
++    if (g_started || !config.renderer) return false;
++
++    // The engine passes std::wstring paths to Boost.Filesystem; make sure the narrow side is UTF-8.
++    boost::filesystem::path::imbue(locale(locale(), new codecvt_utf8<wchar_t>()));
++
++    const wstring root = Utf8ToWide(config.rootDirectory);
++    {
++        // The music scan and settings assume these exist; a fresh install has none of them.
++        boost::system::error_code ec;
++        boost::filesystem::path p(root);
++        boost::filesystem::create_directories(p / SU_DATA_DIR, ec);
++        boost::filesystem::create_directories(p / SU_MUSIC_DIR, ec);
++        boost::filesystem::create_directories(p / SU_CACHE_DIR, ec);
++    }
++
++    g_setting = make_shared<Setting>(root);
++    g_setting->Load(SU_SETTING_FILE);
++
++    InitializeDebugFeature();
++    DxInitialize(config.renderer, config.width, config.height, config.imageDecoder);
++    SetUseZBuffer3D(TRUE);
++    SetWriteZBuffer3D(TRUE);
++    SetDrawScreen(DX_SCREEN_BACK);
++
++    g_manager = make_unique<ExecutionManager>(g_setting);
++    g_manager->Initialize();
++    g_manager->EnumerateSkins();
++    g_manager->ExecuteSkin();
++
++    g_last = steady_clock::now();
++    g_started = true;
++    return true;
++}
++
++void GameHostFrame()
++{
++    if (!g_started) return;
++    const auto now = steady_clock::now();
++    double delta = duration<double>(now - g_last).count();
++    g_last = now;
++    if (delta > 0.25) delta = 0.25;         // resume-from-background / debugger pause: don't fast-forward animations
++
++    g_manager->Tick(delta);
++    g_manager->Draw();                      // ClearDrawScreen ... ScreenFlip
++}
++
++void GameHostStop()
++{
++    if (!g_started) return;
++    g_manager->Shutdown();
++    g_manager.reset();
++    TerminateDebugFeature();
++    g_setting->Save();
++    g_setting.reset();
++    DxShutdown();
++    g_started = false;
++}
++
++void GameHostSuspend()
++{
++    if (g_started) BASS_Pause();
++}
++
++void GameHostResume()
++{
++    if (g_started) {
++        BASS_Start();
++        g_last = steady_clock::now();
++    }
++}
++
++void GameHostTouchBegan(int id, double x)
++{
++    if (g_started) g_manager->GetControlStateSafe()->TouchBegan(id, x);
++}
++
++void GameHostTouchMoved(int id, double x)
++{
++    if (g_started) g_manager->GetControlStateSafe()->TouchMoved(id, x);
++}
++
++void GameHostTouchEnded(int id)
++{
++    if (g_started) g_manager->GetControlStateSafe()->TouchEnded(id);
++}
++
++} // namespace sea
+diff -ruN '--exclude=*.rc' '--exclude=*.filters' '--exclude=Log.txt' base/Seaurchin/GameHost.h /home/claude/work/Seaurchin-iOS/Seaurchin/GameHost.h
+--- base/Seaurchin/GameHost.h	1970-01-01 00:00:00.000000000 +0000
++++ /home/claude/work/Seaurchin-iOS/Seaurchin/GameHost.h	2026-11-15 04:53:29.275005879 +0000
+@@ -0,0 +1,34 @@
++﻿#pragma once
++// GameHost - the platform-independent replacement for Main.cpp's
++// PreInitialize/Initialize/Run/Terminate, for hosts (iOS) that own the run loop.
++// All functions must be called from the main thread unless noted.
++
++#include <string>
++#include "../Platform/DxCompat/DxLib.h"     // sea::DxImageDecoder
++#include "../Platform/DxCompat/DxRenderer.h"
++
++namespace sea {
++
++struct GameHostConfig {
++    std::string rootDirectory;              // UTF-8. Contains Data/, Music/, Cache/, config.json
++    DxRenderer *renderer = nullptr;         // not owned
++    DxImageDecoder imageDecoder;            // PNG/JPEG/... -> RGBA8
++    int width = 1280;                       // virtual resolution (SU_RES_WIDTH/HEIGHT)
++    int height = 720;
++};
++
++bool GameHostStart(const GameHostConfig &config);
++void GameHostFrame();                       // once per display refresh: Tick + Draw (+ Present)
++void GameHostStop();
++void GameHostSuspend();                     // app left the foreground: pause audio
++void GameHostResume();
++
++// Touch input.  x is normalised across the slider area (0 = left edge, 1 = right edge).
++// Thread-safe.
++void GameHostTouchBegan(int fingerId, double x);
++void GameHostTouchMoved(int fingerId, double x);
++void GameHostTouchEnded(int fingerId);
++
++bool GameHostExitRequested();
++
++} // namespace sea
+diff -ruN '--exclude=*.rc' '--exclude=*.filters' '--exclude=Log.txt' base/Seaurchin/Interfaces.cpp /home/claude/work/Seaurchin-iOS/Seaurchin/Interfaces.cpp
+--- base/Seaurchin/Interfaces.cpp	2026-11-15 11:40:41.199015113 +0000
++++ /home/claude/work/Seaurchin-iOS/Seaurchin/Interfaces.cpp	2026-11-14 20:13:05.506823251 +0000
+@@ -149,6 +149,10 @@
+ 
+ void InterfacesExitApplication()
+ {
++#if defined(_WIN32)
+     auto hWnd = GetMainWindowHandle();
+     PostMessage(hWnd, WM_CLOSE, 0, 0);
++#else
++    sea::RequestApplicationExit();
++#endif
+ }
+\ No newline at end of file
+diff -ruN '--exclude=*.rc' '--exclude=*.filters' '--exclude=Log.txt' base/Seaurchin/Main.cpp /home/claude/work/Seaurchin-iOS/Seaurchin/Main.cpp
+--- base/Seaurchin/Main.cpp	2026-11-15 11:40:41.199669899 +0000
++++ /home/claude/work/Seaurchin-iOS/Seaurchin/Main.cpp	2026-11-14 20:11:48.956873383 +0000
+@@ -1,4 +1,6 @@
+-﻿#include "Main.h"
++﻿// Windows entry point.  On other platforms the host application drives GameHost.cpp instead.
++#if defined(_WIN32)
++#include "Main.h"
+ #include "resource.h"
+ #include "Debug.h"
+ #include "Setting.h"
+@@ -113,3 +115,4 @@
+         return CallWindowProc(dxlibWndProc, hWnd, msg, wParam, lParam);
+     }
+ }
++#endif // _WIN32
+diff -ruN '--exclude=*.rc' '--exclude=*.filters' '--exclude=Log.txt' base/Seaurchin/Misc.cpp /home/claude/work/Seaurchin-iOS/Seaurchin/Misc.cpp
+--- base/Seaurchin/Misc.cpp	2026-11-15 11:40:41.201280474 +0000
++++ /home/claude/work/Seaurchin-iOS/Seaurchin/Misc.cpp	2026-11-14 20:11:48.957608851 +0000
+@@ -3,54 +3,14 @@
+ 
+ using namespace std;
+ 
+-/*
+-string ConvertUTF8ToShiftJis(const string &utf8str)
+-{
+-    int len = MultiByteToWideChar(CP_UTF8, 0, utf8str.c_str(), -1, nullptr, 0);
+-    wchar_t *buffer = new wchar_t[len];
+-    MultiByteToWideChar(CP_UTF8, 0, utf8str.c_str(), -1, buffer, len);
+-    int sjis = WideCharToMultiByte(CP_ACP, 0, buffer, -1, nullptr, 0, nullptr, nullptr);
+-    char *sbuffer = new char[sjis];
+-    WideCharToMultiByte(CP_ACP, 0, buffer, -1, sbuffer, sjis, nullptr, nullptr);
+-    string ret = sbuffer;
+-    delete[] buffer;
+-    delete[] sbuffer;
+-    return ret;
+-}
+-
+-string ConvertShiftJisToUTF8(const string &sjisstr)
+-{
+-    int len = MultiByteToWideChar(CP_ACP, 0, sjisstr.c_str(), -1, nullptr, 0);
+-    wchar_t *buffer = new wchar_t[len];
+-    MultiByteToWideChar(CP_ACP, 0, sjisstr.c_str(), -1, buffer, len);
+-    int utf8 = WideCharToMultiByte(CP_UTF8, 0, buffer, -1, nullptr, 0, nullptr, nullptr);
+-    char *ubuffer = new char[utf8];
+-    WideCharToMultiByte(CP_UTF8, 0, buffer, -1, ubuffer, utf8, nullptr, nullptr);
+-    string ret = ubuffer;
+-    delete[] buffer;
+-    delete[] ubuffer;
+-    return ret;
+-}
+-*/
+-
+ wstring ConvertUTF8ToUnicode(const string &utf8str)
+ {
+-    int len = MultiByteToWideChar(CP_UTF8, 0, utf8str.c_str(), -1, nullptr, 0);
+-    wchar_t *buffer = new wchar_t[len];
+-    MultiByteToWideChar(CP_UTF8, 0, utf8str.c_str(), -1, buffer, len);
+-    wstring ret = buffer;
+-    delete[] buffer;
+-    return ret;
++    return sea::Utf8ToWide(utf8str);
+ }
+ 
+ string ConvertUnicodeToUTF8(const wstring &utf16str)
+ {
+-    int len = WideCharToMultiByte(CP_UTF8, 0, reinterpret_cast<const wchar_t*>(utf16str.c_str()), -1, nullptr, 0, nullptr, nullptr);
+-    char *buffer = new char[len];
+-    WideCharToMultiByte(CP_UTF8, 0, reinterpret_cast<const wchar_t*>(utf16str.c_str()), -1, buffer, len, nullptr, nullptr);
+-    string ret = buffer;
+-    delete[] buffer;
+-    return ret;
++    return sea::WideToUtf8(utf16str);
+ }
+ 
+ void ScriptSceneWarnOutOf(const string &type, asIScriptContext *ctx)
+diff -ruN '--exclude=*.rc' '--exclude=*.filters' '--exclude=Log.txt' base/Seaurchin/Misc.h /home/claude/work/Seaurchin-iOS/Seaurchin/Misc.h
+--- base/Seaurchin/Misc.h	2026-11-15 11:40:41.198741539 +0000
++++ /home/claude/work/Seaurchin-iOS/Seaurchin/Misc.h	2026-11-14 20:11:48.957948703 +0000
+@@ -54,8 +54,6 @@
+ }
+ 
+ 
+-//std::string ConvertUTF8ToShiftJis(const std::string &utf8str);
+-//std::string ConvertShiftJisToUTF8(const std::string &sjisstr);
+ std::wstring ConvertUTF8ToUnicode(const std::string &utf8str);
+ std::string ConvertUnicodeToUTF8(const std::wstring &utf16str);
+ void ScriptSceneWarnOutOf(const std::string &type, asIScriptContext *ctx);
+diff -ruN '--exclude=*.rc' '--exclude=*.filters' '--exclude=Log.txt' base/Seaurchin/PrecompiledHeader.h /home/claude/work/Seaurchin-iOS/Seaurchin/PrecompiledHeader.h
+--- base/Seaurchin/PrecompiledHeader.h	2026-11-15 11:40:41.197358783 +0000
++++ /home/claude/work/Seaurchin-iOS/Seaurchin/PrecompiledHeader.h	2026-11-15 11:39:58.514378746 +0000
+@@ -1,18 +1,25 @@
+ ﻿#pragma once
+ 
++// Force-included into every translation unit of the core (MSVC: /Yu, Xcode: prefix header).
++#include "../Platform/SeaPlatform.h"
++
+ //Windows
++#if defined(SEA_PLATFORM_WINDOWS)
+ #include <Windows.h>
+ #include <Shlwapi.h>
+ #include <Imm.h>
++#endif
+ 
+ //C Runtime
+ #define _USE_MATH_DEFINES
+ #include <cstdio>
+ #include <cstdlib>
+ #include <cstdint>
++#include <cstddef>
+ #include <cassert>
+ #include <cstring>
+ #include <cmath>
++#include <climits>
+ 
+ //C++ Standard
+ #include <string>
+@@ -27,9 +34,15 @@
+ #include <chrono>
+ #include <ios>
+ #include <map>
++#include <set>
++#include <bitset>
++#include <array>
++#include <deque>
++#include <numeric>
+ #include <utility>
+ #include <limits>
+ #include <unordered_map>
++#include <unordered_set>
+ #include <forward_list>
+ #include <list>
+ #include <tuple>
+@@ -37,6 +50,8 @@
+ #include <exception>
+ #include <future>
+ #include <thread>
++#include <mutex>
++#include <type_traits>
+ 
+ //Boost
+ #include <boost/property_tree/ptree.hpp>
+@@ -54,19 +69,25 @@
+ #include <boost/optional.hpp>
+ 
+ //Libraries
++#if defined(SEA_PLATFORM_WINDOWS)
+ #include <DxLib.h>
++#else
++#include "../Platform/DxCompat/DxLib.h"
++#endif
+ //#include <EffekseerForDXLib.h>
+ 
+ #include <angelscript.h>
+-#include <scriptarray\scriptarray.h>
+-#include <scriptmath\scriptmath.h>
+-#include <scriptmath\scriptmathcomplex.h>
+-#include <scriptstdstring\scriptstdstring.h>
+-#include <scriptdictionary\scriptdictionary.h>
++#include <scriptarray/scriptarray.h>
++#include <scriptmath/scriptmath.h>
++#include <scriptmath/scriptmathcomplex.h>
++#include <scriptstdstring/scriptstdstring.h>
++#include <scriptdictionary/scriptdictionary.h>
+ #include "wscriptbuilder.h"
+ //#include "as_smart_ptr_wrapper.h"
+ 
++#if defined(SEA_PLATFORM_WINDOWS)
+ #include <WacomMultiTouch.h>
++#endif
+ 
+ #include <ft2build.h>
+ #include FT_FREETYPE_H
+@@ -76,6 +97,8 @@
+ 
+ #include <bass.h>
+ #include <bassmix.h>
+-#include <bass_fx.h>
++#if defined(SEA_PLATFORM_WINDOWS)
++#include <bass_fx.h>        // included upstream but no BASS_FX function is called anywhere; not needed on iOS
++#endif
+ 
+-#include <msgpack.hpp>
+\ No newline at end of file
++#include <msgpack.hpp>
+diff -ruN '--exclude=*.rc' '--exclude=*.filters' '--exclude=Log.txt' base/Seaurchin/SceneDebug.cpp /home/claude/work/Seaurchin-iOS/Seaurchin/SceneDebug.cpp
+--- base/Seaurchin/SceneDebug.cpp	2026-11-15 11:40:41.195332869 +0000
++++ /home/claude/work/Seaurchin-iOS/Seaurchin/SceneDebug.cpp	2026-11-15 04:53:29.274855854 +0000
+@@ -19,8 +19,11 @@
+ 
+ void SceneDebug::Draw()
+ {
++#if defined(_WIN32)
+     clsDx();
+     printfDx(reinterpret_cast<const char*>(L"%2.1f fps\n"), fps);
++#endif
++    // Other platforms: DxLib's on-screen debug text does not exist; the host shows its own FPS counter.
+ }
+ 
+ bool SceneDebug::IsDead()
+diff -ruN '--exclude=*.rc' '--exclude=*.filters' '--exclude=Log.txt' base/Seaurchin/ScenePlayer.Draw.cpp /home/claude/work/Seaurchin-iOS/Seaurchin/ScenePlayer.Draw.cpp
+--- base/Seaurchin/ScenePlayer.Draw.cpp	2026-11-15 11:40:41.201084300 +0000
++++ /home/claude/work/Seaurchin-iOS/Seaurchin/ScenePlayer.Draw.cpp	2026-11-14 20:13:05.508488059 +0000
+@@ -289,7 +289,7 @@
+     auto left = lerp(slane / 16.0, SU_LANE_X_MIN, SU_LANE_X_MAX);
+     auto right = lerp((slane + length) / 16.0, SU_LANE_X_MIN, SU_LANE_X_MAX);
+     auto xadjust = note->Type.test((size_t)SusNoteType::Left) ? -80.0 : (note->Type.test((size_t)SusNoteType::Right) ? 80.0 : 0);
+-    auto role = note->Type.test((size_t)SusNoteType::Up) ? fmod(CurrentTime* 2.0, 0.5) : 0.5 - fmod(CurrentTime* 2.0, 0.5);
++    float role = (float)(note->Type.test((size_t)SusNoteType::Up) ? fmod(CurrentTime* 2.0, 0.5) : 0.5 - fmod(CurrentTime* 2.0, 0.5));
+     auto handle = note->Type.test((size_t)SusNoteType::Up) ? imageAirUp->GetHandle() : imageAirDown->GetHandle();
+ 
+     VERTEX3D vertices[] = {
+diff -ruN '--exclude=*.rc' '--exclude=*.filters' '--exclude=Log.txt' base/Seaurchin/ScriptFunction.cpp /home/claude/work/Seaurchin-iOS/Seaurchin/ScriptFunction.cpp
+--- base/Seaurchin/ScriptFunction.cpp	2026-11-15 11:40:41.198525611 +0000
++++ /home/claude/work/Seaurchin-iOS/Seaurchin/ScriptFunction.cpp	2026-11-14 20:12:53.225056155 +0000
+@@ -8,12 +8,14 @@
+ using namespace boost::filesystem;
+ 
+ 
++#if defined(_WIN32)
+ static int CALLBACK FontEnumerationProc(ENUMLOGFONTEX *lpelfe, NEWTEXTMETRICEX *lpntme, DWORD FontType, LPARAM lParam);
+ 
+ static int CALLBACK FontEnumerationProc(ENUMLOGFONTEX *lpelfe, NEWTEXTMETRICEX *lpntme, DWORD FontType, LPARAM lParam)
+ {
+     return 0;
+ }
++#endif
+ 
+ void YieldTime(double time)
+ {
+@@ -60,6 +62,7 @@
+ 	return SSound::CreateSoundFromFile(smng, ConvertUnicodeToUTF8(p.wstring()), 4);
+ }
+ 
++#if defined(_WIN32)
+ void EnumerateInstalledFonts()
+ {
+     //HKEY_LOCAL_MACHINE\Software\Microsoft\Windows NT\CurrentVersion\Fonts
+@@ -69,4 +72,10 @@
+     memcpy_s(logfont.lfFaceName, sizeof(logfont.lfFaceName), "", 1);
+     logfont.lfPitchAndFamily = 0;
+     EnumFontFamiliesEx(hdc, &logfont, (FONTENUMPROC)FontEnumerationProc, (LPARAM)nullptr, 0);
+-}
+\ No newline at end of file
++}
++#else
++void EnumerateInstalledFonts()
++{
++    // Scripts only ever use pre-baked .sif fonts; there is no system font enumeration outside Windows.
++}
++#endif
+diff -ruN '--exclude=*.rc' '--exclude=*.filters' '--exclude=Log.txt' base/Seaurchin/ScriptResource.cpp /home/claude/work/Seaurchin-iOS/Seaurchin/ScriptResource.cpp
+--- base/Seaurchin/ScriptResource.cpp	2026-11-15 11:40:41.199994845 +0000
++++ /home/claude/work/Seaurchin-iOS/Seaurchin/ScriptResource.cpp	2026-11-14 20:12:53.224920599 +0000
+@@ -61,7 +61,7 @@
+ SImage * SImage::CreateLoadedImageFromFile(const string &file, bool async)
+ {
+     if (async) SetUseASyncLoadFlag(TRUE);
+-    auto result = new SImage(LoadGraph(reinterpret_cast<const char*>(ConvertUTF8ToUnicode(file).c_str())));
++    auto result = new SImage(LoadGraph(SU_DX_PATH(file)));
+     if (async) SetUseASyncLoadFlag(FALSE);
+ 	result->AddRef();
+ 	return result;
+@@ -128,7 +128,7 @@
+ {
+     auto result = new SAnimatedImage(w, h, count, time);
+     result->Images.resize(count);
+-    LoadDivGraph(reinterpret_cast<const char*>(ConvertUTF8ToUnicode(file).c_str()), count, xc, yc, w, h, result->Images.data());
++    LoadDivGraph(SU_DX_PATH(file), count, xc, yc, w, h, result->Images.data());
+     result->AddRef();
+     return result;
+ }
+@@ -167,6 +167,7 @@
+ 			my = line * Size;
+ 			continue;
+ 		}
++		if ((uint32_t)c >= Chars.size()) continue;   //wchar_t is UTF-32 on non-Windows: skip code points outside the BMP table
+ 		auto gi = Chars[c];
+ 		if (!gi) continue;
+ 		if (rt)DrawRectGraph(
+@@ -195,7 +196,7 @@
+ SFont * SFont::CreateLoadedFontFromFile(const string & file)
+ {
+ 	auto result = new SFont();
+-	ifstream font(ConvertUTF8ToUnicode(file), ios::in | ios::binary);
++	ifstream font(SU_FS_PATH(ConvertUTF8ToUnicode(file)), ios::in | ios::binary);
+ 
+ 	FontDataHeader header;
+ 	font.read((char*)&header, sizeof(FontDataHeader));
+diff -ruN '--exclude=*.rc' '--exclude=*.filters' '--exclude=Log.txt' base/Seaurchin/ScriptSprite.cpp /home/claude/work/Seaurchin-iOS/Seaurchin/ScriptSprite.cpp
+--- base/Seaurchin/ScriptSprite.cpp	2026-11-15 11:40:41.198162327 +0000
++++ /home/claude/work/Seaurchin-iOS/Seaurchin/ScriptSprite.cpp	2026-11-14 20:12:53.225313035 +0000
+@@ -446,18 +446,12 @@
+ 
+ void STextInput::Draw()
+ {
+-    int wcc = MultiByteToWideChar(CP_OEMCP, 0, CurrentRawString.c_str(), 1024, nullptr, 0);
+-    wchar_t *widestr = new wchar_t[wcc];
+-    MultiByteToWideChar(CP_OEMCP, 0, CurrentRawString.c_str(), 1024, widestr, 0);
+-    for (int i = 0; i < wcc; i++) {
+-
+-    }
+-    delete[] widestr;
++    // Rendering of the input text is not implemented upstream (the loop body was empty).
+ }
+ 
+ void STextInput::Tick(double delta)
+ {
+-    TCHAR buffer[1024] = { 0 };
++    char buffer[1024] = { 0 };
+     switch (CheckKeyInput(InputHandle)) {
+     case 0:
+         GetKeyInputString(buffer, InputHandle);
+diff -ruN '--exclude=*.rc' '--exclude=*.filters' '--exclude=Log.txt' base/Seaurchin/Seaurchin.vcxproj /home/claude/work/Seaurchin-iOS/Seaurchin/Seaurchin.vcxproj
+--- base/Seaurchin/Seaurchin.vcxproj	2026-11-15 11:40:41.205238662 +0000
++++ /home/claude/work/Seaurchin-iOS/Seaurchin/Seaurchin.vcxproj	2026-11-15 11:39:58.514794927 +0000
+@@ -187,6 +187,7 @@
+     <ClCompile Include="ExecutionManager.cpp" />
+     <ClCompile Include="Interfaces.cpp" />
+     <ClCompile Include="Main.cpp" />
++    <ClCompile Include="..\Platform\SeaText.cpp" />
+     <ClCompile Include="Misc.cpp" />
+     <ClCompile Include="MusicsManager.cpp" />
+     <ClCompile Include="PrecompiledHeader.cpp">
+@@ -239,6 +240,7 @@
+     <ClInclude Include="Misc.h" />
+     <ClInclude Include="MusicsManager.h" />
+     <ClInclude Include="PrecompiledHeader.h" />
++    <ClInclude Include="..\Platform\SeaPlatform.h" />
+     <ClInclude Include="resource.h" />
+     <ClInclude Include="Scene.h" />
+     <ClInclude Include="SceneDebug.h" />
+diff -ruN '--exclude=*.rc' '--exclude=*.filters' '--exclude=Log.txt' base/Seaurchin/Setting.cpp /home/claude/work/Seaurchin-iOS/Seaurchin/Setting.cpp
+--- base/Seaurchin/Setting.cpp	2026-11-15 11:40:41.198228975 +0000
++++ /home/claude/work/Seaurchin-iOS/Seaurchin/Setting.cpp	2026-11-14 20:12:53.224287341 +0000
+@@ -10,14 +10,22 @@
+ 
+ std::wstring Setting::RootDirectory = L"";
+ 
++#if defined(_WIN32)
+ Setting::Setting(HMODULE hModule)
+ {
+-    if (RootDirectory != "") return;
++    if (!RootDirectory.empty()) return;
+     wchar_t directory[MAX_PATH];
+     GetModuleFileNameW(hModule, directory, MAX_PATH);
+     PathRemoveFileSpecW(directory);
+     RootDirectory = directory;
+ }
++#endif
++
++Setting::Setting(const std::wstring &rootDirectory)
++{
++    if (!RootDirectory.empty()) return;
++    RootDirectory = rootDirectory;
++}
+ 
+ Setting::Setting()
+ {
+@@ -28,7 +36,7 @@
+ {
+     file = filename;
+     if (!exists(RootDirectory / file)) Save();
+-    std::ifstream ifs((RootDirectory / file).wstring(), ios::in);
++    std::ifstream ifs(SU_FS_PATH((RootDirectory / file).wstring()), ios::in);
+     read_json(ifs, SettingTree);
+     WriteDebugConsole("Setting File Loaded.\n");
+     ifs.close();
+@@ -41,7 +49,7 @@
+ 
+ void Setting::Save() const
+ {
+-    std::ofstream ofs((RootDirectory / file).wstring(), ios::out);
++    std::ofstream ofs(SU_FS_PATH((RootDirectory / file).wstring()), ios::out);
+     write_json(ofs, SettingTree);
+     WriteDebugConsole("Setting File Saved.\n");
+     ofs.close();
+diff -ruN '--exclude=*.rc' '--exclude=*.filters' '--exclude=Log.txt' base/Seaurchin/Setting.h /home/claude/work/Seaurchin-iOS/Seaurchin/Setting.h
+--- base/Seaurchin/Setting.h	2026-11-15 11:40:41.199186438 +0000
++++ /home/claude/work/Seaurchin-iOS/Seaurchin/Setting.h	2026-11-14 20:12:53.223601091 +0000
+@@ -11,7 +11,10 @@
+ 
+ public:
+     Setting();
+-    Setting(HMODULE hModule);
++#if defined(_WIN32)
++    Setting(HMODULE hModule);       // root = directory of the executable
++#endif
++    explicit Setting(const std::wstring &rootDirectory);   // root = given directory (used on iOS: the app's Documents folder)
+     void Load(const std::wstring &filename);
+     inline void Reload() { Load(file); }
+     void Save() const;
+diff -ruN '--exclude=*.rc' '--exclude=*.filters' '--exclude=Log.txt' base/Seaurchin/SoundManager.cpp /home/claude/work/Seaurchin-iOS/Seaurchin/SoundManager.cpp
+--- base/Seaurchin/SoundManager.cpp	2026-11-15 11:40:41.197708288 +0000
++++ /home/claude/work/Seaurchin-iOS/Seaurchin/SoundManager.cpp	2026-11-14 20:12:53.224450495 +0000
+@@ -6,6 +6,15 @@
+ using namespace boost::algorithm;
+ using namespace boost::filesystem;
+ 
++// BASS file names: UTF-16 with BASS_UNICODE on Windows, plain UTF-8 everywhere else.
++#if defined(_WIN32)
++#define SU_BASS_PATH(w) ((w).c_str())
++#define SU_BASS_UNICODE BASS_UNICODE
++#else
++#define SU_BASS_PATH(w) (sea::WideToUtf8(w).c_str())
++#define SU_BASS_UNICODE 0
++#endif
++
+ // SoundSample ------------------------
+ SoundSample::SoundSample(HSAMPLE sample)
+ {
+@@ -39,7 +48,7 @@
+ 
+ SoundSample *SoundSample::CreateFromFile(const wstring &fileNameW, int maxChannels)
+ {
+-    auto handle = BASS_SampleLoad(FALSE, fileNameW.c_str(), 0, 0, maxChannels, BASS_SAMPLE_OVER_POS | BASS_UNICODE);
++    auto handle = BASS_SampleLoad(FALSE, SU_BASS_PATH(fileNameW), 0, 0, maxChannels, BASS_SAMPLE_OVER_POS | SU_BASS_UNICODE);
+     SoundSample *result = new SoundSample(handle);
+     return result;
+ }
+@@ -86,7 +95,7 @@
+ 
+ SoundStream *SoundStream::CreateFromFile(const wstring & fileNameW)
+ {
+-    auto handle = BASS_StreamCreateFile(FALSE, fileNameW.c_str(), 0, 0, BASS_UNICODE);
++    auto handle = BASS_StreamCreateFile(FALSE, SU_BASS_PATH(fileNameW), 0, 0, SU_BASS_UNICODE);
+     SoundStream *result = new SoundStream(handle);
+     return result;
+ }
+@@ -157,7 +166,11 @@
+ SoundManager::SoundManager()
+ {
+     //よろしくない
++#if defined(_WIN32)
+     if (!BASS_Init(-1, 44100, 0, GetMainWindowHandle(), NULL)) abort();
++#else
++    if (!BASS_Init(-1, 44100, 0, NULL, NULL)) abort();
++#endif
+     WriteDebugConsole(TEXT("BASS_Init\n"));
+ }
+ 
+diff -ruN '--exclude=*.rc' '--exclude=*.filters' '--exclude=Log.txt' base/Seaurchin/SusAnalyzer.cpp /home/claude/work/Seaurchin-iOS/Seaurchin/SusAnalyzer.cpp
+--- base/Seaurchin/SusAnalyzer.cpp	2026-11-15 11:40:41.197604585 +0000
++++ /home/claude/work/Seaurchin-iOS/Seaurchin/SusAnalyzer.cpp	2026-11-14 20:13:05.507478396 +0000
+@@ -40,11 +40,12 @@
+                     break;
+                 case 'u': {
+                     //utf-8 4byte食う
+-                    char *cp = "0000";
++                    char cp[5] = "0000";    // was `char *cp = "0000"`: wrote into a string literal
+                     for (int i = 0; i < 4; i++) {
+                         cp[i] = *(++it);
+                     }
+                     wchar_t r = stoi(cp, 0, 16);
++                    (void)r;
+                     //でも突っ込むのめんどくさいので🙅で代用します
+                     result << u8"xx";
+                     break;
+@@ -109,7 +110,7 @@
+     Reset();
+ 
+ 
+-    file.open(fileName, ios::in);
++    file.open(SU_FS_PATH(fileName), ios::in);
+     char bom[3];
+     file.read(bom, 3);
+     if (bom[0] != (char)0xEF || bom[1] != (char)0xBB || bom[2] != (char)0xBF) file.seekg(0);
+diff -ruN '--exclude=*.rc' '--exclude=*.filters' '--exclude=Log.txt' base/Seaurchin/wscriptbuilder.cpp /home/claude/work/Seaurchin-iOS/Seaurchin/wscriptbuilder.cpp
+--- base/Seaurchin/wscriptbuilder.cpp	2026-11-15 11:40:41.198929408 +0000
++++ /home/claude/work/Seaurchin-iOS/Seaurchin/wscriptbuilder.cpp	2026-11-14 20:13:05.508258448 +0000
+@@ -54,11 +54,7 @@
+ {
+ 	if( idx >= includedScripts.size() ) return "";
+ 
+-#ifdef _WIN32
+ 	set<wstring, ci_less>::const_iterator it = includedScripts.begin();
+-#else
+-	set<string>::const_iterator it = includedScripts.begin();
+-#endif
+ 	while( idx-- > 0 ) it++;
+ 	return ConvertUnicodeToUTF8(*it).c_str();
+ }
+@@ -150,7 +146,11 @@
+ 	// Open the script file
+ 	wstring scriptFile = filename;
+ 	FILE *f = 0;
++#if defined(_WIN32)
+ 	_wfopen_s(&f, scriptFile.c_str(), L"rb");
++#else
++	f = fopen(ConvertUnicodeToUTF8(scriptFile).c_str(), "rb");
++#endif
+     
+ 	if( f == 0 )
+ 	{

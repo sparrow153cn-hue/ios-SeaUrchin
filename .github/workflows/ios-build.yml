@@ -1,0 +1,109 @@
+name: iOS build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+env:
+  # macos-latest is macos-26 (Xcode 26) since mid-2026.  This old code base is safer on the older Xcode 16
+  # toolchain first; to try the newer one, change `runs-on` to macos-26 and XCODE_VERSION to 26.x.
+  XCODE_VERSION: "16.4"
+
+jobs:
+  # ---------------------------------------------------------------------------------------------
+  # Fast, cheap, and the only part of this pipeline that has actually been run: the platform-independent
+  # code (DxLib replacement, touch router, text conversion, controller, font layout, PNG decoding).
+  # ---------------------------------------------------------------------------------------------
+  portable-tests:
+    name: Portable tests (Linux)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y g++ make libpng-dev
+      - run: make -C Tests test
+
+  # ---------------------------------------------------------------------------------------------
+  # Builds the app.  UNVERIFIED: expect to iterate on compile errors; build.log is always uploaded.
+  # ---------------------------------------------------------------------------------------------
+  ios:
+    name: iOS app (unsigned)
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: |
+          app="/Applications/Xcode_${XCODE_VERSION}.app"
+          if [ -d "$app" ]; then sudo xcode-select -s "$app"; else echo "::warning::$app not found, using the default Xcode"; fi
+          xcodebuild -version
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      # Boost/AngelScript/FreeType/libpng/msgpack sources (big, so cached).  BASS is deliberately not cached or committed.
+      - name: Cache third-party sources
+        id: cache-deps
+        uses: actions/cache@v4
+        with:
+          path: |
+            ThirdParty
+            !ThirdParty/bass
+          key: thirdparty-${{ hashFiles('scripts/fetch_deps.sh') }}
+
+      - name: Fetch third-party sources
+        if: steps.cache-deps.outputs.cache-hit != 'true'
+        run: bash scripts/fetch_deps.sh
+
+      - name: Fetch BASS (proprietary, downloaded at build time)
+        env:
+          BASS_IOS_URL: ${{ vars.BASS_IOS_URL }}
+          BASSMIX_IOS_URL: ${{ vars.BASSMIX_IOS_URL }}
+        run: |
+          # empty repository variables must fall back to the script defaults
+          [ -n "$BASS_IOS_URL" ] || unset BASS_IOS_URL
+          [ -n "$BASSMIX_IOS_URL" ] || unset BASSMIX_IOS_URL
+          bash scripts/fetch_bass.sh
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Build (device SDK, no code signing)
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project Seaurchin.xcodeproj -scheme Seaurchin \
+            -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            build 2>&1 | tee build.log
+
+      - name: Show the first compiler errors in the job summary
+        if: always()
+        run: |
+          {
+            echo "### First errors"
+            echo '```'
+            grep -E "error:|fatal error:|ld: " build.log | sort -u | head -60 || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Package unsigned IPA
+        run: |
+          app=$(find build/Build/Products -maxdepth 2 -name 'Seaurchin.app' | head -n1)
+          test -n "$app"
+          rm -rf Payload && mkdir Payload && cp -R "$app" Payload/
+          zip -qry Seaurchin-unsigned.ipa Payload
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: Seaurchin-unsigned-ipa
+          path: Seaurchin-unsigned.ipa
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: build.log

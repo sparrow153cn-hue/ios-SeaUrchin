@@ -1,0 +1,14 @@
+# Keep scripts runnable on the Linux/macOS CI runners even if the repo was created on Windows.
+*.sh       text eol=lf
+Makefile   text eol=lf
+*.yml      text eol=lf
+*.yaml     text eol=lf
+*.metal    text eol=lf
+# Never let git "fix" line endings of binary game data.
+*.png  binary
+*.jpg  binary
+*.sif  binary
+*.ogg  binary
+*.wav  binary
+*.mp3  binary
+*.mp   binary
