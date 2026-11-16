@@ -92,6 +92,10 @@ targets:
           - FT2_BUILD_LIBRARY=1
           - PNG_ARM_NEON_OPT=0
         OTHER_CPLUSPLUSFLAGS:
+          - -stdlib=libc++
+          # Explicit libc++ headers avoid relying on implicit toolchain discovery during PCH scanning.
+          - -isystem
+          - $(TOOLCHAIN_DIR)/usr/include/c++/v1
           - -Wno-c++11-narrowing                  # MSVC accepted double->float in braced initialisers; clang errors
           - -Wno-deprecated-declarations
           - -Wno-writable-strings
@@ -129,4 +133,4 @@ targets:
           - $(SRCROOT)/Platform
           - $(SRCROOT)
         OTHER_LDFLAGS: [-lc++]
-        OTHER_CPLUSPLUSFLAGS: [-Wno-c++11-narrowing]
+        OTHER_CPLUSPLUSFLAGS: [-stdlib=libc++, -isystem, $(TOOLCHAIN_DIR)/usr/include/c++/v1, -Wno-c++11-narrowing]
