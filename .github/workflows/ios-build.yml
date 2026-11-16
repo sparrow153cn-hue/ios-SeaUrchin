@@ -101,6 +101,10 @@ jobs:
           need ThirdParty/bass/bassmix.h
           need ThirdParty/bass/bass.xcframework
           need ThirdParty/bass/bassmix.xcframework
+          asm=ThirdParty/angelscript/sdk/angelscript/source/as_callfunc_arm64_xcode.S
+          if [ -e "$asm" ]; then echo "ok   $asm"; else
+            echo "::warning title=AngelScript arm64 assembly::$asm not found (native calls on arm64 need it). callfunc files present: $(ls ThirdParty/angelscript/sdk/angelscript/source | grep -i callfunc | tr '\n' ' ')"
+          fi
           if [ "$missing" != 0 ]; then
             echo "--- ThirdParty layout (2 levels) ---"; find ThirdParty -maxdepth 2 | sort | head -80
             exit 1
