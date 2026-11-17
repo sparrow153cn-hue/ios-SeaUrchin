@@ -86,10 +86,7 @@ fi
 
 cat <<'MSG'
 
-Done.  One manual step remains - BASS (proprietary, https://www.un4seen.com):
-  download the *iOS* packages of BASS and BASSmix and put them here:
-      ThirdParty/bass/bass.h  bassmix.h
-      ThirdParty/bass/ios/libbass.a  libbassmix.a
-  BASS is free for non-commercial use; a commercial App Store release needs a license.
+Done.  Next: scripts/fetch_bass.sh   (BASS is proprietary, https://www.un4seen.com: free for non-commercial use,
+a commercial / App Store release needs a license.)
 Then:  xcodegen generate && open Seaurchin.xcodeproj
 MSG

@@ -32,6 +32,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # The only place the app name lives is the top-level `name:` in project.yml (change it with
+      # scripts/rename_app.sh).  Project, scheme, .app, .ipa and artifact names all derive from it.
+      - name: Read app name from project.yml
+        run: |
+          name=$(sed -n 's/^name:[[:space:]]*//p' project.yml | head -n1 | tr -d "\"'\r")
+          test -n "$name" || { echo "::error::no top-level name: in project.yml"; exit 1; }
+          echo "APP_NAME=$name" >> "$GITHUB_ENV"
+          echo "App name: $name"
+
       - name: Select Xcode
         run: |
           app="/Applications/Xcode_${XCODE_VERSION}.app"
@@ -68,38 +77,89 @@ jobs:
       - name: Generate Xcode project
         run: xcodegen generate
 
+      # Fails early and by name if a path the Xcode project references does not exist (an early Xcode failure
+      # usually means exactly that).  Also prints the layout so a wrong guess is easy to correct.
+      - name: Preflight - are all third-party paths where project.yml expects them?
+        run: |
+          missing=0
+          need() { if [ ! -e "$1" ]; then echo "::error title=Missing path::$1"; missing=1; else echo "ok   $1"; fi; }
+          need "${APP_NAME}.xcodeproj"
+          need ThirdParty/angelscript/sdk/angelscript/source/as_context.cpp
+          need ThirdParty/angelscript/sdk/angelscript/include/angelscript.h
+          need ThirdParty/angelscript/sdk/add_on/scriptarray/scriptarray.h
+          need ThirdParty/angelscript/sdk/add_on/scriptmath/scriptmath.h
+          need ThirdParty/angelscript/sdk/add_on/scriptstdstring/scriptstdstring.h
+          need ThirdParty/angelscript/sdk/add_on/scriptdictionary/scriptdictionary.h
+          need ThirdParty/boost/boost/filesystem.hpp
+          need ThirdParty/boost/libs/filesystem/src/path.cpp
+          need ThirdParty/freetype/include/ft2build.h
+          need ThirdParty/freetype-build/ft_amalgam.c
+          need ThirdParty/libpng/png.c
+          need ThirdParty/libpng/pnglibconf.h
+          need ThirdParty/msgpack/include/msgpack.hpp
+          need ThirdParty/bass/bass.h
+          need ThirdParty/bass/bassmix.h
+          need ThirdParty/bass/bass.xcframework
+          need ThirdParty/bass/bassmix.xcframework
+          asm=ThirdParty/angelscript/sdk/angelscript/source/as_callfunc_arm64_xcode.S
+          if [ -e "$asm" ]; then echo "ok   $asm"; else
+            echo "::warning title=AngelScript arm64 assembly::$asm not found (native calls on arm64 need it). callfunc files present: $(ls ThirdParty/angelscript/sdk/angelscript/source | grep -i callfunc | tr '\n' ' ')"
+          fi
+          if [ "$missing" != 0 ]; then
+            echo "--- ThirdParty layout (2 levels) ---"; find ThirdParty -maxdepth 2 | sort | head -80
+            exit 1
+          fi
+
+      # If header lookup is ever wrong again this shows what Xcode actually applied, and whether the runner's environment
+      # injects include paths (CPATH & co.), without having to dig through the build log.
+      - name: Diagnostics - header-related build settings
+        run: |
+          echo "--- environment variables that add include paths ---"
+          env | grep -E "^(CPATH|CPLUS_INCLUDE_PATH|C_INCLUDE_PATH|OBJC_INCLUDE_PATH|SDKROOT|DEVELOPER_DIR|LIBRARY_PATH)=" || echo "(none)"
+          echo "--- build settings per target ---"
+          xcodebuild -project "${APP_NAME}.xcodeproj" -scheme "${APP_NAME}" -configuration Release -sdk iphoneos -showBuildSettings 2>/dev/null \
+            | grep -E "^Build settings for action|^    (TARGET_NAME|SYSTEM_HEADER_SEARCH_PATHS|HEADER_SEARCH_PATHS|CLANG_ENABLE_MODULES|CLANG_CXX_LANGUAGE_STANDARD|GCC_PREFIX_HEADER|GCC_PRECOMPILE_PREFIX_HEADER|SDKROOT) = " \
+            | cut -c1-400 || true
+
       - name: Build (device SDK, no code signing)
         run: |
           set -o pipefail
           xcodebuild \
-            -project Seaurchin.xcodeproj -scheme Seaurchin \
+            -project "${APP_NAME}.xcodeproj" -scheme "${APP_NAME}" \
             -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' \
             -derivedDataPath build \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
             build 2>&1 | tee build.log
 
-      - name: Show the first compiler errors in the job summary
+      - name: Report build errors (annotations + summary)
         if: always()
         run: |
+          [ -f build.log ] || exit 0
+          grep -E "error:|fatal error:|ld: |\*\* BUILD FAILED" build.log | sed 's/^[[:space:]]*//' | awk '!seen[$0]++' | head -60 > errors.txt || true
+          # one annotation per error (GitHub shows at most 10 per step), message text escaped for the workflow-command syntax
+          head -10 errors.txt | while IFS= read -r line; do
+            esc=${line//'%'/'%25'}; esc=${esc//$'\r'/'%0D'}
+            echo "::error title=Build error::${esc}"
+          done
+          tail -25 build.log | tr -d '\r' | sed 's/%/%25/g' | awk 'BEGIN{ORS="%0A"}{print}' > tail.enc
+          echo "::error title=Last 25 lines of build.log::$(cat tail.enc)"
           {
-            echo "### First errors"
-            echo '```'
-            grep -E "error:|fatal error:|ld: " build.log | sort -u | head -60 || true
-            echo '```'
+            echo "### Build errors (first 60 distinct)"; echo '```'; cat errors.txt; echo '```'
+            echo "### Last 40 lines"; echo '```'; tail -40 build.log; echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Package unsigned IPA
         run: |
-          app=$(find build/Build/Products -maxdepth 2 -name 'Seaurchin.app' | head -n1)
+          app=$(find build/Build/Products -maxdepth 2 -name "${APP_NAME}.app" | head -n1)
           test -n "$app"
           rm -rf Payload && mkdir Payload && cp -R "$app" Payload/
-          zip -qry Seaurchin-unsigned.ipa Payload
+          zip -qry "${APP_NAME}-unsigned.ipa" Payload
 
       - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
-          name: Seaurchin-unsigned-ipa
-          path: Seaurchin-unsigned.ipa
+          name: ${{ env.APP_NAME }}-unsigned-ipa
+          path: ${{ env.APP_NAME }}-unsigned.ipa
 
       - name: Upload build log
         if: always()
