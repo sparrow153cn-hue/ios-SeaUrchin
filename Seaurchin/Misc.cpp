@@ -52,7 +52,8 @@ double ConvertFloat(const string &input)
 bool ConvertBoolean(const string &input)
 {
     auto test = input;
-    transform(test.cbegin(), test.cend(), test.begin(), tolower);
+    // ::tolower, not tolower: with `using namespace std` the bare name is overloaded (<locale>'s template) and libc++ can't deduce it
+    transform(test.cbegin(), test.cend(), test.begin(), ::tolower);
     return
         input == "1"
         || input == "true"
