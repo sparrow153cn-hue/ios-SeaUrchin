@@ -121,6 +121,12 @@ jobs:
             | grep -E "^Build settings for action|^    (TARGET_NAME|SYSTEM_HEADER_SEARCH_PATHS|HEADER_SEARCH_PATHS|CLANG_ENABLE_MODULES|CLANG_CXX_LANGUAGE_STANDARD|GCC_PREFIX_HEADER|GCC_PRECOMPILE_PREFIX_HEADER|SDKROOT) = " \
             | cut -c1-400 || true
 
+      # By default Xcode stops starting new compile jobs after the first failure, so each run shows only one file's
+      # errors.  This preference makes it keep compiling the other files, so one run reports (nearly) all of them.
+      # Harmless if xcodebuild ignores it.
+      - name: Keep building after errors (report as many errors as possible per run)
+        run: defaults write com.apple.dt.Xcode IDEBuildOperationContinueBuildingAfterErrors -bool YES
+
       - name: Build (device SDK, no code signing)
         run: |
           set -o pipefail
