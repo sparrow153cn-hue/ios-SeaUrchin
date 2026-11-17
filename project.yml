@@ -64,6 +64,10 @@ targets:
           - BOOST_FILESYSTEM_VERSION=3
           - BOOST_FILESYSTEM_STATIC_LINK=1
           - BOOST_ALL_NO_LIB=1
+          # Boost 1.83's atomic_tools.hpp uses std::atomic_ref (C++20 only); this is a gnu++17 build.
+          - BOOST_FILESYSTEM_NO_CXX20_ATOMIC_REF=1    # Boost.Filesystem's own switch: use boost::atomic_ref instead
+          - BOOST_NO_CXX20_HDR_ATOMIC=1
+          - BOOST_NO_CXX20_ATOMIC_REF=1
 
   # C-only code.  Kept apart because libc++'s directory must NOT be on the search path for C compiles, and because a
   # target with C files makes Xcode precompile prefix headers a second time as C.
@@ -131,6 +135,9 @@ targets:
           - BOOST_FILESYSTEM_VERSION=3            # path::imbue / wstring() API the engine uses
           - BOOST_FILESYSTEM_STATIC_LINK=1
           - BOOST_ALL_NO_LIB=1
+          - BOOST_FILESYSTEM_NO_CXX20_ATOMIC_REF=1
+          - BOOST_NO_CXX20_HDR_ATOMIC=1
+          - BOOST_NO_CXX20_ATOMIC_REF=1
         OTHER_CPLUSPLUSFLAGS:
           - -Wno-c++11-narrowing                  # MSVC accepted double->float in braced initialisers; clang errors
           - -Wno-deprecated-declarations
