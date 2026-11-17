@@ -178,5 +178,6 @@ targets:
           - $(SDKROOT)/usr/include/c++/v1
           - $(SRCROOT)/Platform
           - $(SRCROOT)
-        OTHER_LDFLAGS: [-lc++]
+        # no OTHER_LDFLAGS -lc++: clang++ already links libc++, and passing it again only produced
+        # "ld: warning: ignoring duplicate libraries: '-lc++'"
         OTHER_CPLUSPLUSFLAGS: [-Wno-c++11-narrowing]
