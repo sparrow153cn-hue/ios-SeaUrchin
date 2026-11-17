@@ -69,3 +69,9 @@ void Debug_ReleaseFunction(...)
 {
     
 }
+
+// Release-build stand-in for _WriteDebugConsoleU (see Debug.h): same signature, does nothing.
+void Debug_ReleaseFunctionU(const string&)
+{
+
+}
