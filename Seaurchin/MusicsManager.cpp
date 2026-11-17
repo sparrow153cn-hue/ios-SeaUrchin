@@ -136,7 +136,8 @@ std::shared_ptr<MusicScoreInfo> MusicSelectionCursor::GetScoreVariantAt(int32_t 
 {
     auto music = GetMusicAt(relative);
     if (!music) return nullptr;
-    auto variant = music->Scores[min((unsigned int)VariantIndex, music->Scores.size() - 1)];
+    // size_t, not unsigned int: std::min needs both arguments to be the same type (size_t is 64-bit on arm64)
+    auto variant = music->Scores[min((size_t)VariantIndex, music->Scores.size() - 1)];
     return variant;
 }
 
@@ -260,7 +261,7 @@ MusicSelectionState MusicSelectionCursor::Next()
             if (current->Musics.size() == 0) return MusicSelectionState::Error;
             MusicIndex = (MusicIndex + 1) % current->Musics.size();
             auto nm = GetMusicAt(MusicIndex);
-            VariantIndex = min((unsigned int)VariantIndex, nm->Scores.size() - 1);
+            VariantIndex = min((size_t)VariantIndex, nm->Scores.size() - 1);
             break;
         }
     }
@@ -279,7 +280,7 @@ MusicSelectionState MusicSelectionCursor::Previous()
             if (current->Musics.size() == 0) return MusicSelectionState::Error;
             MusicIndex = (MusicIndex + current->Musics.size() - 1) % current->Musics.size();
             auto nm = GetMusicAt(MusicIndex);
-            VariantIndex = min((unsigned int)VariantIndex, nm->Scores.size() - 1);
+            VariantIndex = min((size_t)VariantIndex, nm->Scores.size() - 1);
             break;
         }
     }
