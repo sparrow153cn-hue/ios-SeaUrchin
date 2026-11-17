@@ -154,7 +154,8 @@ void SusAnalyzer::LoadFromFile(const wstring &fileName, bool analyzeOnlyMetaData
 void SusAnalyzer::ProcessCommand(const xp::smatch &result, bool onlyMeta)
 {
     auto name = result[1].str();
-    transform(name.cbegin(), name.cend(), name.begin(), toupper);
+    // ::toupper, not toupper: with `using namespace std` the bare name is overloaded (<locale>'s template) and libc++ can't deduce it
+    transform(name.cbegin(), name.cend(), name.begin(), ::toupper);
     if (ba::starts_with(name, "BPM")) {
         // #BPMxx yyy.yy
         BpmDefinitions[ConvertHexatridecimal(name.substr(3))] = ConvertFloat(result[2].str());
@@ -277,7 +278,7 @@ void SusAnalyzer::ProcessData(const xp::smatch &result)
 
     if (!xp::regex_match(meas, AllNumeric)) {
         // コマンドデータ
-        transform(meas.cbegin(), meas.cend(), meas.begin(), toupper);
+        transform(meas.cbegin(), meas.cend(), meas.begin(), ::toupper);
         if (meas == "BPM") {
             auto number = ConvertHexatridecimal(lane);
             BpmDefinitions[number] = ConvertFloat(pattern);
