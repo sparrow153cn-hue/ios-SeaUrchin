@@ -154,6 +154,33 @@ jobs:
             echo "### Last 40 lines"; echo '```'; tail -40 build.log; echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
+      # For "it builds but crashes on launch": shows whether the bundle is structurally sound (embedded frameworks,
+      # the compiled Metal shader library, bundled Resources, what the executable links against and where it looks
+      # for @rpath libraries).  Written to ipa-report.txt, which is uploaded in the same artifact as build.log.
+      - name: Inspect app bundle (crash triage)
+        if: always()
+        run: |
+          app=$(find build/Build/Products -maxdepth 2 -name "${APP_NAME}.app" 2>/dev/null | head -n1)
+          if [ -z "$app" ]; then echo "no .app was built" > ipa-report.txt; exit 0; fi
+          {
+            echo "== app: $app"
+            echo "== top level";            ls -la "$app"
+            echo "== Frameworks";           ls -la "$app/Frameworks" 2>&1
+            echo "== metal libraries";      find "$app" -name "*.metallib" -exec ls -la {} \;
+            echo "== Resources (2 levels)"; find "$app/Resources" -maxdepth 2 2>&1 | head -60
+            exe="$app/$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$app/Info.plist")"
+            echo "== executable: $exe";     file "$exe"; lipo -info "$exe"
+            echo "== linked libraries";     otool -L "$exe"
+            echo "== rpaths";               otool -l "$exe" | grep -A2 LC_RPATH
+            for f in "$app"/Frameworks/*.framework; do
+              [ -d "$f" ] || continue
+              b="$f/$(basename "$f" .framework)"
+              echo "== framework binary: $b"; file "$b"; lipo -info "$b"; otool -D "$b"; otool -L "$b" | head -12
+            done
+            echo "== Info.plist";           /usr/libexec/PlistBuddy -c 'Print' "$app/Info.plist" | head -40
+          } > ipa-report.txt 2>&1 || true
+          { echo "### App bundle report"; echo '```'; cat ipa-report.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Package unsigned IPA
         run: |
           app=$(find build/Build/Products -maxdepth 2 -name "${APP_NAME}.app" | head -n1)
@@ -172,4 +199,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: build-log
-          path: build.log
+          path: |
+            build.log
+            ipa-report.txt
