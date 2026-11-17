@@ -1,4 +1,8 @@
-﻿#pragma once
+#pragma once
+
+// C++ only.  Xcode precompiles a prefix header once per language a target uses; without this guard a C file
+// in the same target makes it parse libc++ as C (the first iOS CI failure).  MSVC defines __cplusplus too.
+#ifdef __cplusplus
 
 // C++ only.  Xcode precompiles a prefix header once per language a target uses; without this guard a C file
 // in the same target makes it parse libc++ as C (the first iOS CI failure).  MSVC defines __cplusplus too.
