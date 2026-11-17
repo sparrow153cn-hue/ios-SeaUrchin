@@ -31,6 +31,14 @@ if [ ! -d angelscript ]; then
   fetch "https://www.angelcode.com/angelscript/sdk/files/angelscript_${ANGELSCRIPT_VERSION}.zip" angelscript.zip
   mkdir angelscript && unzip -q angelscript.zip -d angelscript
 fi
+# Xcode 16's assembler rejects the CFI unwind directives in AngelScript's arm64 Apple assembly
+# ("error: invalid CFI advance_loc expression" at `.cfi_restore lr`).  They only describe the stack frame for
+# debuggers/unwinders and generate no code, so dropping them is safe for the build.  Idempotent.
+asm=angelscript/sdk/angelscript/source/as_callfunc_arm64_xcode.S
+if [ -f "$asm" ] && grep -q '\.cfi_' "$asm"; then
+  echo "-> stripping .cfi_* directives from $asm"
+  sed -i.bak '/^[[:space:]]*\.cfi_/d' "$asm" && rm -f "$asm.bak"
+fi
 
 # --- msgpack-c (header only) ---
 if [ ! -d msgpack ]; then
