@@ -46,15 +46,17 @@ fi
 mkdir -p freetype-build
 # Only the TrueType/OpenType path is needed (the engine bakes .ttf/.otf fonts); a custom module list keeps the
 # amalgamation self-consistent (FreeType's default ftmodule.h also references autofit, pcf, bdf, pfr, ...).
+# ftinit.c includes this file several times with FT_USE_MODULE( type, symbol ) redefined each time, so every entry
+# needs BOTH the C type of the class record and the real symbol name (same format as FreeType's own ftmodule.h).
 cat > freetype-build/ftmodule_sea.h <<'EOC'
-FT_USE_MODULE( tt_driver )
-FT_USE_MODULE( cff_driver )
-FT_USE_MODULE( psaux_module )
-FT_USE_MODULE( psnames_module )
-FT_USE_MODULE( pshinter_module )
-FT_USE_MODULE( ft_raster1_renderer_class )
-FT_USE_MODULE( sfnt_module )
-FT_USE_MODULE( ft_smooth_renderer_class )
+FT_USE_MODULE( FT_Driver_ClassRec, tt_driver_class )
+FT_USE_MODULE( FT_Driver_ClassRec, cff_driver_class )
+FT_USE_MODULE( FT_Module_Class, psaux_module_class )
+FT_USE_MODULE( FT_Module_Class, psnames_module_class )
+FT_USE_MODULE( FT_Module_Class, pshinter_module_class )
+FT_USE_MODULE( FT_Renderer_Class, ft_raster1_renderer_class )
+FT_USE_MODULE( FT_Module_Class, sfnt_module_class )
+FT_USE_MODULE( FT_Renderer_Class, ft_smooth_renderer_class )
 EOC
 cat > freetype-build/ft_amalgam.c <<'EOC'
 #define FT_CONFIG_MODULES_H "ftmodule_sea.h"
