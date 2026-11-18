@@ -154,24 +154,48 @@ jobs:
             echo "### Last 40 lines"; echo '```'; tail -40 build.log; echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Package unsigned IPA
+        run: |
+          app=$(find build/Build/Products -maxdepth 2 -name "${APP_NAME}.app" | head -n1)
+          test -n "$app"
+          rm -rf Payload && mkdir Payload && cp -R "$app" Payload/
+          # BASS ships its frameworks as armv7 + armv7s + arm64 fat binaries.  The 32-bit slices are useless on any
+          # iPhone from the last decade and are a known trouble spot for the re-signing done by sideloading tools
+          # (e.g. LiveContainer): a framework that ends up with an invalid signature gets the whole process killed the
+          # moment it is loaded.  Keep only the arm64 slice.
+          for f in Payload/*.app/Frameworks/*.framework; do
+            [ -d "$f" ] || continue
+            b="$f/$(basename "$f" .framework)"
+            if lipo -info "$b" 2>/dev/null | grep -q "Architectures in the fat file"; then
+              lipo -thin arm64 "$b" -output "$b.arm64" && mv "$b.arm64" "$b"
+              echo "thinned: $(lipo -info "$b")"
+            fi
+          done
+          zip -qry "${APP_NAME}-unsigned.ipa" Payload
+
       # For "it builds but crashes on launch": shows whether the bundle is structurally sound (embedded frameworks,
       # the compiled Metal shader library, bundled Resources, what the executable links against and where it looks
-      # for @rpath libraries).  Written to ipa-report.txt, which is uploaded in the same artifact as build.log.
+      # for @rpath libraries).  Inspects the packaged copy (Payload/), i.e. exactly what goes into the IPA.  Written to
+      # ipa-report.txt, which is uploaded in the same artifact as build.log.
       - name: Inspect app bundle (crash triage)
         if: always()
         run: |
-          app=$(find build/Build/Products -maxdepth 2 -name "${APP_NAME}.app" 2>/dev/null | head -n1)
+          app=$(ls -d Payload/*.app 2>/dev/null | head -n1)
+          [ -n "$app" ] || app=$(find build/Build/Products -maxdepth 2 -name "${APP_NAME}.app" 2>/dev/null | head -n1)
           if [ -z "$app" ]; then echo "no .app was built" > ipa-report.txt; exit 0; fi
           {
             echo "== app: $app"
             echo "== top level";            ls -la "$app"
-            echo "== Frameworks";           ls -la "$app/Frameworks" 2>&1
+            echo "== Frameworks";           ls -laR "$app/Frameworks" 2>&1
             echo "== metal libraries";      find "$app" -name "*.metallib" -exec ls -la {} \;
             echo "== Resources (2 levels)"; find "$app/Resources" -maxdepth 2 2>&1 | head -60
             exe="$app/$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$app/Info.plist")"
             echo "== executable: $exe";     file "$exe"; lipo -info "$exe"
+            echo "== header";               otool -hv "$exe"
+            echo "== build version";        otool -l "$exe" | grep -A5 LC_BUILD_VERSION
             echo "== linked libraries";     otool -L "$exe"
             echo "== rpaths";               otool -l "$exe" | grep -A2 LC_RPATH
+            echo "== code signature";       codesign -dv "$exe" 2>&1 || true
             for f in "$app"/Frameworks/*.framework; do
               [ -d "$f" ] || continue
               b="$f/$(basename "$f" .framework)"
@@ -180,13 +204,6 @@ jobs:
             echo "== Info.plist";           /usr/libexec/PlistBuddy -c 'Print' "$app/Info.plist" | head -40
           } > ipa-report.txt 2>&1 || true
           { echo "### App bundle report"; echo '```'; cat ipa-report.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Package unsigned IPA
-        run: |
-          app=$(find build/Build/Products -maxdepth 2 -name "${APP_NAME}.app" | head -n1)
-          test -n "$app"
-          rm -rf Payload && mkdir Payload && cp -R "$app" Payload/
-          zip -qry "${APP_NAME}-unsigned.ipa" Payload
 
       - name: Upload IPA
         uses: actions/upload-artifact@v4
