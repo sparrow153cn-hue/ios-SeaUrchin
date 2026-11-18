@@ -194,6 +194,9 @@ targets:
         excludes: ["Info.plist"]
       - path: Platform/iOS/SeaCrashReporter.mm
       - path: Platform/iOS/SeaCrashReporter.h
+    dependencies:
+      - sdk: UIKit.framework
+      - sdk: Foundation.framework
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.example.seaurchin.probe
@@ -211,6 +214,8 @@ targets:
       - path: Platform/iOS/SeaCrashReporter.mm
       - path: Platform/iOS/SeaCrashReporter.h
     dependencies:
+      - sdk: UIKit.framework
+      - sdk: Foundation.framework
       - framework: ThirdParty/bass/bass.xcframework
         embed: true
       - framework: ThirdParty/bass/bassmix.xcframework

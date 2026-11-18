@@ -162,12 +162,12 @@ jobs:
           # BASS ships its frameworks as armv7 + armv7s + arm64 fat binaries.  The 32-bit slices are useless on any
           # iPhone from the last decade and are a known trouble spot for the re-signing done by sideloading tools
           # (e.g. LiveContainer): a framework that ends up with an invalid signature gets the whole process killed the
-          # moment it is loaded.  Keep only the arm64 slice.
+          # moment it is loaded.  Keep only the arm64 slice.  (lipo writes the new file as 644; dylibs are 755.)
           for f in Payload/*.app/Frameworks/*.framework; do
             [ -d "$f" ] || continue
             b="$f/$(basename "$f" .framework)"
             if lipo -info "$b" 2>/dev/null | grep -q "Architectures in the fat file"; then
-              lipo -thin arm64 "$b" -output "$b.arm64" && mv "$b.arm64" "$b"
+              lipo -thin arm64 "$b" -output "$b.arm64" && mv "$b.arm64" "$b" && chmod 755 "$b"
               echo "thinned: $(lipo -info "$b")"
             fi
           done
@@ -195,7 +195,7 @@ jobs:
               [ -d "$f" ] || continue
               b="$f/$(basename "$f" .framework)"
               if lipo -info "$b" 2>/dev/null | grep -q "Architectures in the fat file"; then
-                lipo -thin arm64 "$b" -output "$b.arm64" && mv "$b.arm64" "$b"
+                lipo -thin arm64 "$b" -output "$b.arm64" && mv "$b.arm64" "$b" && chmod 755 "$b"
               fi
             done
             (cd "probe-$p" && zip -qry "../$p-unsigned.ipa" Payload)
