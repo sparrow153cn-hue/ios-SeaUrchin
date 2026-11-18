@@ -33,7 +33,9 @@
     self.window = [[UIWindow alloc] initWithFrame:UIScreen.mainScreen.bounds];
     UIViewController *vc = [[UIViewController alloc] init];
     vc.view.backgroundColor = UIColor.systemGreenColor;
-    UILabel *label = [[UILabel alloc] initWithFrame:CGRectInset(vc.view.bounds, 24, 48)];
+    // CGRectMake is an inline function; CGRectInset would need the CoreGraphics framework to be linked.
+    CGRect bounds = vc.view.bounds;
+    UILabel *label = [[UILabel alloc] initWithFrame:CGRectMake(24, 48, bounds.size.width - 48, bounds.size.height - 96)];
     label.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     label.numberOfLines = 0;
     label.textAlignment = NSTextAlignmentCenter;
