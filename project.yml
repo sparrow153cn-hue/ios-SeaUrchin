@@ -181,3 +181,47 @@ targets:
         # no OTHER_LDFLAGS -lc++: clang++ already links libc++, and passing it again only produced
         # "ld: warning: ignoring duplicate libraries: '-lc++'"
         OTHER_CPLUSPLUSFLAGS: [-Wno-c++11-narrowing]
+
+  # ---------------------------------------------------------------------------------------------------------------
+  # Bisecting aids for "the app crashes on launch when run through LiveContainer".  Two tiny apps built with the same
+  # toolchain and packaged the same way; they are NOT part of the game.  See Platform/Probe/ProbeMain.mm.
+  # ---------------------------------------------------------------------------------------------------------------
+  SeaurchinProbe:                                 # UIKit only
+    type: application
+    platform: iOS
+    sources:
+      - path: Platform/Probe
+        excludes: ["Info.plist"]
+      - path: Platform/iOS/SeaCrashReporter.mm
+      - path: Platform/iOS/SeaCrashReporter.h
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.example.seaurchin.probe
+        INFOPLIST_FILE: Platform/Probe/Info.plist
+        HEADER_SEARCH_PATHS:
+          - $(SDKROOT)/usr/include/c++/v1
+          - $(SRCROOT)/Platform/iOS
+
+  SeaurchinProbeBass:                             # the same, plus the embedded BASS frameworks
+    type: application
+    platform: iOS
+    sources:
+      - path: Platform/Probe
+        excludes: ["Info.plist"]
+      - path: Platform/iOS/SeaCrashReporter.mm
+      - path: Platform/iOS/SeaCrashReporter.h
+    dependencies:
+      - framework: ThirdParty/bass/bass.xcframework
+        embed: true
+      - framework: ThirdParty/bass/bassmix.xcframework
+        embed: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.example.seaurchin.probebass
+        INFOPLIST_FILE: Platform/Probe/Info.plist
+        HEADER_SEARCH_PATHS:
+          - $(SDKROOT)/usr/include/c++/v1
+          - $(SRCROOT)/Platform/iOS
+          - $(SRCROOT)/ThirdParty/bass
+        GCC_PREPROCESSOR_DEFINITIONS:
+          - SEA_PROBE_BASS=1
