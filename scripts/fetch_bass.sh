@@ -72,9 +72,10 @@ if not dep.search(text):
     text = text.replace(anchor, anchor + '      - framework: ThirdParty/bass/%s.xcframework\n        embed: true\n' % name, 1)
     print("   project.yml: added the %s.xcframework dependency (old layout migrated)" % name)
 
+# One entry per target that uses BASS (the app, and the SeaurchinProbeBass test app): the embed setting applies to all.
 text, n = dep.subn(r'\g<1>' + embed, text)
-if n != 1:
-    sys.exit("project.yml: expected exactly one %s.xcframework dependency, found %d" % (name, n))
+if n < 1:
+    sys.exit("project.yml: found no %s.xcframework dependency" % name)
 
 # leftovers of the old loose-library layout would break the link step
 text = text.replace('        LIBRARY_SEARCH_PATHS:\n          - $(SRCROOT)/ThirdParty/bass/ios\n', '')
